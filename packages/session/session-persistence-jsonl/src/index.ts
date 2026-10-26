@@ -1608,8 +1608,17 @@ class JsonlSessionPersistence extends SessionPersistence {
     signal?: AbortSignal,
   ): Promise<void> {
     signal?.throwIfAborted()
+    // Listing scans pass no expectedId: a relocated (e.g. archived) log must be
+    // skipped there, not fail the whole workspace listing, so identity mismatches
+    // surface as the typed corruption error that listArtifacts already filters.
+    // Targeted loads (expectedId set) keep the caller-specific plain error.
+    const isListingScan = expectedId === undefined
+    const identityError = (message: string, cause?: unknown) =>
+      isListingScan
+        ? new SessionPersistenceCorruptionError(message, { cause })
+        : new Error(message, { cause })
     if (expectedId !== undefined && meta.id !== expectedId) {
-      throw new Error(`corrupt session log "${path}": requested id "${expectedId}" does not match header id "${meta.id}"`)
+      throw identityError(`corrupt session log "${path}": requested id "${expectedId}" does not match header id "${meta.id}"`)
     }
     let expectedPath: string
     try {
@@ -1621,10 +1630,10 @@ class JsonlSessionPersistence extends SessionPersistence {
         this.compression,
       )
     } catch (error) {
-      throw new Error(`corrupt session log "${path}": header id cannot name a storage path`, { cause: error })
+      throw identityError(`corrupt session log "${path}": header id cannot name a storage path`, error)
     }
     if (path !== expectedPath && !await this.sameFile(path, expectedPath, signal)) {
-      throw new Error(`corrupt session log "${path}": header id "${meta.id}" and cwd identify "${expectedPath}"`)
+      throw identityError(`corrupt session log "${path}": header id "${meta.id}" and cwd identify "${expectedPath}"`)
     }
     signal?.throwIfAborted()
   }
